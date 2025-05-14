@@ -21,7 +21,7 @@ class SopaDeLetrasNoTradicional:
         self.tiempo_transcurrido = 0
         self.juego_pausado = False
         self.juego_oculto = False
-        self.palabras_resueltas = 0
+        self.palabras_resueltas = set()
         self.partidas_jugadas = 0
         self.palabras_encontradas_total = 0
         
@@ -207,48 +207,57 @@ class SopaDeLetrasNoTradicional:
         self.letras_label.config(text="")
     
     def aplicar_seleccion(self):
-        palabra = "".join(self.letras_seleccionadas)
-        if palabra in self.palabras_encontradas:
+        palabra = "".join(self.letras_seleccionadas).lower()
+        if palabra in self.palabras_encontradas and palabra not in self.palabras_resueltas:
             # Marcar como resuelta
             for fila, col in self.seleccionadas:
                 self.celdas[fila][col].config(bg='lightgreen')
-            
-            # Actualizar pistas
-            self.actualizar_pistas(palabra)
-            
+            self.palabras_resueltas.add(palabra)
+                
+            # Actualizar pistas (sin pasar parámetro)
+            self.actualizar_pistas()
+                    
             # Incrementar contador
-            self.palabras_resueltas += 1
             self.palabras_encontradas_total += 1
-            
+                    
             # Verificar si se completó el juego
-            if self.palabras_resueltas == len(self.palabras_encontradas):
+            if len(self.palabras_resueltas) == len(self.palabras_encontradas):
                 self.partidas_jugadas += 1
                 messagebox.showinfo("¡Felicidades!", f"¡Has completado la sopa de letras en {self.tiempo_label.cget('text')}!")
+        elif palabra in self.palabras_resueltas:
+            messagebox.showwarning("Palabra ya encontrada", "Esta palabra ya fue encontrada anteriormente.")
         else:
             messagebox.showwarning("Palabra no válida", "La palabra seleccionada no está en la lista.")
-        
+                
         self.borrar_seleccion()
-    
-    def actualizar_pistas(self, palabra_resuelta):
+
+    def actualizar_pistas(self):
         self.pistas_texto.config(state=tk.NORMAL)
         self.pistas_texto.delete(1.0, tk.END)
-        
+
         # Agrupar palabras por longitud
         palabras_por_longitud = defaultdict(list)
         for palabra in self.palabras_encontradas:
-            if palabra != palabra_resuelta:
-                palabras_por_longitud[len(palabra)].append(palabra)
-        
-        # Mostrar pistas
+            palabras_por_longitud[len(palabra)].append(palabra)
+
+        # Mostrar pistas ordenadas por longitud (de mayor a menor)
         for longitud in sorted(palabras_por_longitud.keys(), reverse=True):
             palabras = palabras_por_longitud[longitud]
             self.pistas_texto.insert(tk.END, f"{len(palabras)} DE {longitud} LETRAS\n", 'titulo')
+            
             for palabra in palabras:
-                pista = f"[ {palabra[0].upper()} ] " + "_ " * (len(palabra)-1) + "\n"
-                self.pistas_texto.insert(tk.END, pista)
+                if palabra in self.palabras_resueltas:
+                    # Palabra encontrada - mostrar completa en verde
+                    self.pistas_texto.insert(tk.END, f"[{palabra.upper()}]\n", 'resuelto')
+                else:
+                    # Palabra no encontrada - mostrar solo primera letra
+                    pista = f"[ {palabra[0].upper()} ] " + "_ " * (len(palabra)-1) + "\n"
+                    self.pistas_texto.insert(tk.END, pista)
+            
             self.pistas_texto.insert(tk.END, "\n")
-        
+
         self.pistas_texto.tag_config('titulo', font=('Arial', 10, 'bold'))
+        self.pistas_texto.tag_config('resuelto', foreground='green', font=('Arial', 10, 'bold'))
         self.pistas_texto.config(state=tk.DISABLED)
     
     def generar_nueva_sopa(self):
@@ -262,23 +271,23 @@ class SopaDeLetrasNoTradicional:
             if len(self.palabras_encontradas) >= self.num_palabras and len(longitudes) >= 3:
                 break
             intentos += 1
+        
         # Seleccionar las primeras 7 palabras únicas ordenadas por longitud
         palabras_unicas = list({p.lower() for p in self.palabras_encontradas})
         palabras_unicas.sort(key=lambda x: -len(x))
         self.palabras_encontradas = palabras_unicas[:self.num_palabras]
         
-        # Reiniciar estado del juego
-        self.palabras_resueltas = 0
+        # Reiniciar estado del juego (CORRECCIÓN: mantener como conjunto)
+        self.palabras_resueltas = set()
         self.seleccionadas = []
         self.letras_seleccionadas = []
         self.letras_label.config(text="")
         
         # Actualizar pistas
-        self.actualizar_pistas("")
+        self.actualizar_pistas()
         
         # Mostrar la sopa en la interfaz
         self.mostrar_sopa()
-    
     def generar_sopa_aleatoria(self):
         # Letras con mayor frecuencia en español para palabras más largas
         letras_frecuentes = 'aeiourslnmtcdpbgvhqyfj'
@@ -355,17 +364,60 @@ class SopaDeLetrasNoTradicional:
                 self.celdas[i][j].config(text=self.sopa[i][j].upper(), bg='light gray')
     
     def resolver_sopa(self):
+        # Detener el temporizador
+        self.juego_pausado = True
+        self.btn_pausa.config(state=tk.DISABLED)
+        
+        # Marcar todas las palabras como resueltas (sin sumar puntos)
         for palabra in self.palabras_encontradas:
-            encontrada = False
-            # Buscar la palabra en la sopa
-            for i in range(self.rows):
-                for j in range(self.cols):
-                    if self.encontrar_palabra_desde(i, j, palabra):
-                        encontrada = True
-                        break
-                if encontrada:
+            if palabra not in self.palabras_resueltas:
+                self.palabras_resueltas.add(palabra)
+                
+                # Resaltar la palabra en la sopa
+                for i in range(self.rows):
+                    for j in range(self.cols):
+                        visitadas = set()
+                        if self.encontrar_y_marcar_palabra(i, j, palabra, visitadas):
+                            # Marcar las celdas de esta palabra
+                            for (f, c) in visitadas:
+                                self.celdas[f][c].config(bg='lightgreen')
+                            break
+                    else:
+                        continue
                     break
-    
+        
+        # Actualizar pistas mostrando todas las palabras completas en verde
+        self.actualizar_pistas()
+        
+        # Deshabilitar interacción con las celdas
+        for i in range(self.rows):
+            for j in range(self.cols):
+                self.celdas[i][j].unbind("<Button-1>")
+        
+        # Deshabilitar botones de juego
+        self.btn_aplicar.config(state=tk.DISABLED)
+        self.btn_borrar.config(state=tk.DISABLED)
+        
+        # Mostrar mensaje
+        messagebox.showinfo("Resuelto", "¡Sopa de letras resuelta! Se han mostrado todas las palabras.")
+
+    def encontrar_y_marcar_palabra(self, fila, col, palabra, visitadas, indice=0):
+        """Versión modificada para encontrar y marcar palabras"""
+        if indice == len(palabra):
+            return True
+        if (fila, col) in visitadas or not (0 <= fila < self.rows and 0 <= col < self.cols):
+            return False
+        if self.sopa[fila][col] != palabra[indice]:
+            return False
+            
+        visitadas.add((fila, col))
+        direcciones = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        for dr, dc in direcciones:
+            if self.encontrar_y_marcar_palabra(fila + dr, col + dc, palabra, visitadas, indice + 1):
+                return True
+        visitadas.remove((fila, col))
+        return False
+
     def encontrar_palabra_desde(self, fila, col, palabra):
         """Intenta encontrar la palabra desde una posición específica"""
         visitadas = set()
@@ -386,11 +438,7 @@ class SopaDeLetrasNoTradicional:
             visitadas.remove((f, c))
             return False
         
-        if dfs(fila, col, 0):
-            for f, c in visitadas:
-                self.celdas[f][c].config(bg='lightgreen')
-            return True
-        return False
+        return dfs(fila, col, 0)
     
     def reiniciar_juego(self):
         self.generar_nueva_sopa()
